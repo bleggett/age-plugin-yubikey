@@ -1,10 +1,6 @@
 //! Structs for handling YubiKeys.
 
-use age_core::{
-    format::{FileKey, FILE_KEY_BYTES},
-    primitives::{aead_decrypt, hkdf},
-    secrecy::{zeroize::Zeroize, ExposeSecret, SecretString},
-};
+use age_core::secrecy::{ExposeSecret, SecretString};
 use age_plugin::{identity, Callbacks};
 use bech32::{ToBase32, Variant};
 use dialoguer::Password;
@@ -24,11 +20,10 @@ use yubikey::{
 
 use crate::{
     error::Error,
-    fl,
-    format::{RecipientLine, STANZA_KEY_LABEL},
-    p256::{Recipient, TAG_BYTES},
+    fl, piv_p256,
+    recipient::TAG_BYTES,
     util::{otp_serial_prefix, Metadata},
-    IDENTITY_PREFIX,
+    Recipient, IDENTITY_PREFIX,
 };
 
 const ONE_SECOND: Duration = Duration::from_secs(1);
@@ -398,7 +393,8 @@ pub(crate) fn list_slots(
         match key.slot() {
             SlotId::Retired(slot) => {
                 // Only P-256 keys are compatible with us.
-                let recipient = Recipient::from_certificate(key.certificate());
+                let recipient = piv_p256::Recipient::from_certificate(key.certificate())
+                    .map(Recipient::PivP256);
                 Some((key, slot, recipient))
             }
             _ => None,
@@ -453,7 +449,7 @@ impl Stub {
         Stub {
             serial,
             slot,
-            tag: recipient.tag(),
+            tag: recipient.static_tag(),
             identity_index: 0,
         }
     }
@@ -478,10 +474,6 @@ impl Stub {
         bytes.push(self.slot.into());
         bytes.extend_from_slice(&self.tag);
         bytes
-    }
-
-    pub(crate) fn matches(&self, line: &RecipientLine) -> bool {
-        self.tag == line.tag
     }
 
     /// Returns:
@@ -605,9 +597,9 @@ impl Stub {
         let (cert, pk) = match Certificate::read(&mut yubikey, SlotId::Retired(self.slot))
             .ok()
             .and_then(|cert| {
-                Recipient::from_certificate(&cert)
+                piv_p256::Recipient::from_certificate(&cert)
                     .filter(|pk| pk.tag() == self.tag)
-                    .map(|pk| (cert, pk))
+                    .map(|pk| (cert, Recipient::PivP256(pk)))
             }) {
             Some(pk) => pk,
             None => {
@@ -623,7 +615,6 @@ impl Stub {
             cert,
             pk,
             slot: self.slot,
-            tag: self.tag,
             identity_index: self.identity_index,
             cached_metadata: None,
             last_touch: None,
@@ -636,7 +627,6 @@ pub(crate) struct Connection {
     cert: Certificate,
     pk: Recipient,
     slot: RetiredSlotId,
-    tag: [u8; 4],
     identity_index: usize,
     cached_metadata: Option<Metadata>,
     last_touch: Option<Instant>,
@@ -705,8 +695,10 @@ impl Connection {
         Ok(Ok(()))
     }
 
-    pub(crate) fn unwrap_file_key(&mut self, line: &RecipientLine) -> Result<FileKey, ()> {
-        assert_eq!(self.tag, line.tag);
+    pub(crate) fn p256_ecdh(&mut self, epk_bytes: &[u8]) -> Result<yubikey::Buffer, ()> {
+        // The YubiKey API for performing scalar multiplication takes the point in its
+        // uncompressed SEC-1 encoding.
+        assert_eq!(epk_bytes.len(), 65);
 
         // Check if the touch policy requires a touch.
         let needs_touch = match (
@@ -718,11 +710,9 @@ impl Connection {
             _ => false,
         };
 
-        // The YubiKey API for performing scalar multiplication takes the point in its
-        // uncompressed SEC-1 encoding.
         let shared_secret = match decrypt_data(
             &mut self.yubikey,
-            line.epk_bytes.decompress().as_bytes(),
+            epk_bytes,
             AlgorithmId::EccP256,
             SlotId::Retired(self.slot),
         ) {
@@ -739,22 +729,7 @@ impl Connection {
             }
         }
 
-        let mut salt = vec![];
-        salt.extend_from_slice(line.epk_bytes.as_bytes());
-        salt.extend_from_slice(self.pk.to_encoded().as_bytes());
-
-        let enc_key = hkdf(&salt, STANZA_KEY_LABEL, shared_secret.as_ref());
-
-        // A failure to decrypt is fatal, because we assume that we won't
-        // encounter 32-bit collisions on the key tag embedded in the header.
-        aead_decrypt(&enc_key, FILE_KEY_BYTES, &line.encrypted_file_key)
-            .map_err(|_| ())
-            .map(|mut pt| {
-                FileKey::init_with_mut(|file_key| {
-                    file_key.copy_from_slice(&pt);
-                    pt.zeroize();
-                })
-            })
+        Ok(shared_secret)
     }
 
     /// Close this connection without resetting the YubiKey.

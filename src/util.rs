@@ -1,6 +1,7 @@
 use std::fmt;
 use std::iter;
 
+use base64::{prelude::BASE64_STANDARD_NO_PAD, Engine};
 use x509_parser::{certificate::X509Certificate, der_parser::oid::Oid};
 use yubikey::{
     piv::{RetiredSlotId, SlotId},
@@ -8,7 +9,7 @@ use yubikey::{
 };
 
 use crate::fl;
-use crate::{error::Error, key::Stub, p256::Recipient, BINARY_NAME, USABLE_SLOTS};
+use crate::{error::Error, key::Stub, Recipient, BINARY_NAME, USABLE_SLOTS};
 
 pub(crate) const POLICY_EXTENSION_OID: &[u64] = &[1, 3, 6, 1, 4, 1, 41482, 3, 8];
 
@@ -218,4 +219,15 @@ pub(crate) fn print_identity(stub: Stub, recipient: Recipient, metadata: Metadat
             identity = stub.to_string(),
         )
     );
+}
+
+pub(crate) fn base64_arg<A: AsRef<[u8]>, B: AsMut<[u8]>>(arg: &A, mut buf: B) -> Option<B> {
+    if arg.as_ref().len() != ((4 * buf.as_mut().len()) + 2) / 3 {
+        return None;
+    }
+
+    BASE64_STANDARD_NO_PAD
+        .decode_slice_unchecked(arg, buf.as_mut())
+        .ok()
+        .and_then(|len| (len == buf.as_mut().len()).then_some(buf))
 }

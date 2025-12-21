@@ -1,7 +1,7 @@
 use age_core::{
-    format::{FileKey, Stanza},
-    primitives::aead_encrypt,
-    secrecy::ExposeSecret,
+    format::{FileKey, Stanza, FILE_KEY_BYTES},
+    primitives::{aead_decrypt, aead_encrypt, hkdf},
+    secrecy::{zeroize::Zeroize, ExposeSecret},
 };
 use base64::{prelude::BASE64_STANDARD_NO_PAD, Engine};
 use p256::{
@@ -11,11 +11,14 @@ use p256::{
 use rand::rngs::OsRng;
 use sha2::Sha256;
 
-use crate::{p256::Recipient, STANZA_TAG};
+use crate::{key::Connection, recipient::TAG_BYTES, util::base64_arg};
 
+mod recipient;
+pub(crate) use recipient::Recipient;
+
+const STANZA_TAG: &str = "piv-p256";
 pub(crate) const STANZA_KEY_LABEL: &[u8] = b"piv-p256";
 
-const TAG_BYTES: usize = 4;
 const EPK_BYTES: usize = 33;
 const ENCRYPTED_FILE_KEY_BYTES: usize = 32;
 
@@ -80,17 +83,6 @@ impl RecipientLine {
             return None;
         }
 
-        fn base64_arg<A: AsRef<[u8]>, B: AsMut<[u8]>>(arg: &A, mut buf: B) -> Option<B> {
-            if arg.as_ref().len() != ((4 * buf.as_mut().len()) + 2) / 3 {
-                return None;
-            }
-
-            BASE64_STANDARD_NO_PAD
-                .decode_slice_unchecked(arg, buf.as_mut())
-                .ok()
-                .and_then(|len| (len == buf.as_mut().len()).then_some(buf))
-        }
-
         let (tag, epk_bytes) = match &s.args[..] {
             [tag, epk_bytes] => (
                 base64_arg(tag, [0; TAG_BYTES]),
@@ -109,17 +101,17 @@ impl RecipientLine {
             _ => Err(()),
         })
     }
+}
 
-    pub(crate) fn wrap_file_key(file_key: &FileKey, pk: &Recipient) -> Self {
+impl Recipient {
+    pub(crate) fn wrap_file_key(&self, file_key: &FileKey) -> RecipientLine {
         let esk = EphemeralSecret::random(&mut OsRng);
         let epk = esk.public_key();
         let epk_bytes = EphemeralKeyBytes::from_public_key(&epk);
 
-        let shared_secret = esk.diffie_hellman(pk.public_key());
+        let shared_secret = esk.diffie_hellman(self.public_key());
 
-        let mut salt = vec![];
-        salt.extend_from_slice(epk_bytes.as_bytes());
-        salt.extend_from_slice(pk.to_encoded().as_bytes());
+        let salt = salt(&epk_bytes, self);
 
         let enc_key = {
             let mut okm = [0; 32];
@@ -137,9 +129,42 @@ impl RecipientLine {
         };
 
         RecipientLine {
-            tag: pk.tag(),
+            tag: self.tag(),
             epk_bytes,
             encrypted_file_key,
         }
     }
+}
+
+impl RecipientLine {
+    pub(crate) fn unwrap_file_key(&self, conn: &mut Connection) -> Result<FileKey, ()> {
+        let crate::recipient::Recipient::PivP256(recipient) = conn.recipient();
+        assert_eq!(self.tag, recipient.tag());
+
+        let salt = salt(&self.epk_bytes, recipient);
+
+        // The YubiKey API for performing scalar multiplication takes the point in its
+        // uncompressed SEC-1 encoding.
+        let shared_secret = conn.p256_ecdh(self.epk_bytes.decompress().as_bytes())?;
+
+        let enc_key = hkdf(&salt, STANZA_KEY_LABEL, shared_secret.as_ref());
+
+        // A failure to decrypt is fatal, because we assume that we won't
+        // encounter 32-bit collisions on the key tag embedded in the header.
+        aead_decrypt(&enc_key, FILE_KEY_BYTES, &self.encrypted_file_key)
+            .map_err(|_| ())
+            .map(|mut pt| {
+                FileKey::init_with_mut(|file_key| {
+                    file_key.copy_from_slice(&pt);
+                    pt.zeroize();
+                })
+            })
+    }
+}
+
+fn salt(epk_bytes: &EphemeralKeyBytes, pk: &Recipient) -> Vec<u8> {
+    let mut salt = vec![];
+    salt.extend_from_slice(epk_bytes.as_bytes());
+    salt.extend_from_slice(pk.to_encoded().as_bytes());
+    salt
 }

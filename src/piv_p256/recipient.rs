@@ -1,13 +1,12 @@
 use bech32::{ToBase32, Variant};
 use p256::elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint};
-use sha2::{Digest, Sha256};
 use yubikey::{certificate::PublicKeyInfo, Certificate};
 
 use std::fmt;
 
-use crate::RECIPIENT_PREFIX;
+use crate::recipient::{static_tag, TAG_BYTES};
 
-pub(crate) const TAG_BYTES: usize = 4;
+const RECIPIENT_PREFIX: &str = "age1yubikey";
 
 /// Wrapper around a compressed secp256r1 curve point.
 #[derive(Clone)]
@@ -69,8 +68,7 @@ impl Recipient {
     }
 
     pub(crate) fn tag(&self) -> [u8; TAG_BYTES] {
-        let tag = Sha256::digest(self.to_encoded().as_bytes());
-        (&tag[0..TAG_BYTES]).try_into().expect("length is correct")
+        static_tag(self.to_encoded().as_bytes())
     }
 
     /// Exposes the wrapped public key.
