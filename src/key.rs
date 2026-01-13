@@ -2,7 +2,7 @@
 
 use age_core::secrecy::{ExposeSecret, SecretString};
 use age_plugin::{identity, Callbacks};
-use bech32::{ToBase32, Variant};
+use bech32::{Bech32, Hrp};
 use dialoguer::Password;
 use log::{debug, error, warn};
 use std::convert::Infallible;
@@ -350,19 +350,20 @@ pub(crate) fn manage(yubikey: &mut YubiKey) -> Result<(), Error> {
     }
 
     match MgmKey::get_protected(yubikey) {
-        Ok(mgm_key) => yubikey.authenticate(mgm_key).map_err(|e| match e {
+        Ok(mgm_key) => yubikey.authenticate(&mgm_key).map_err(|e| match e {
             yubikey::Error::AuthenticationError => Error::ManagementKeyAuth,
             _ => e.into(),
         })?,
         Err(yubikey::Error::AuthenticationError) => Err(Error::ManagementKeyAuth)?,
         _ => {
             // Try to authenticate with the default management key.
+            let default_mgm = MgmKey::get_default(yubikey)?;
             yubikey
-                .authenticate(MgmKey::default())
+                .authenticate(&default_mgm)
                 .map_err(|_| Error::CustomManagementKey)?;
 
             // Migrate to a PIN-protected management key.
-            let mgm_key = MgmKey::generate();
+            let mgm_key = MgmKey::generate_for(yubikey, &mut rand_core::OsRng)?;
             eprintln!();
             eprintln!("{}", fl!("mgr-changing-mgmt-key"));
             eprint!("... ");
@@ -421,15 +422,10 @@ pub struct Stub {
 
 impl fmt::Display for Stub {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let hrp = Hrp::parse(IDENTITY_PREFIX).expect("HRP is valid");
         f.write_str(
-            bech32::encode(
-                IDENTITY_PREFIX,
-                self.to_bytes().to_base32(),
-                Variant::Bech32,
-            )
-            .expect("HRP is valid")
-            .to_uppercase()
-            .as_str(),
+            &bech32::encode::<Bech32>(hrp, &self.to_bytes())
+                .expect("Encoding should succeed"),
         )
     }
 }

@@ -1,6 +1,7 @@
-use bech32::{ToBase32, Variant};
+use bech32::{Bech32, Hrp};
 use p256::elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint};
-use yubikey::{certificate::PublicKeyInfo, Certificate};
+use spki::SubjectPublicKeyInfoRef;
+use yubikey::Certificate;
 
 use std::fmt;
 
@@ -20,14 +21,10 @@ impl fmt::Debug for Recipient {
 
 impl fmt::Display for Recipient {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let hrp = Hrp::parse(RECIPIENT_PREFIX).expect("HRP is valid");
         f.write_str(
-            bech32::encode(
-                RECIPIENT_PREFIX,
-                self.to_encoded().as_bytes().to_base32(),
-                Variant::Bech32,
-            )
-            .expect("HRP is valid")
-            .as_str(),
+            &bech32::encode::<Bech32>(hrp, self.to_encoded().as_bytes())
+                .expect("Encoding should succeed"),
         )
     }
 }
@@ -47,11 +44,10 @@ impl Recipient {
         Self::from_spki(cert.subject_pki())
     }
 
-    pub(crate) fn from_spki(spki: &PublicKeyInfo) -> Option<Self> {
-        match spki {
-            PublicKeyInfo::EcP256(pubkey) => Self::from_encoded(pubkey),
-            _ => None,
-        }
+    pub(crate) fn from_spki(spki: SubjectPublicKeyInfoRef<'_>) -> Option<Self> {
+        // Try to parse as P-256 public key
+        let encoded = p256::EncodedPoint::from_bytes(spki.subject_public_key.raw_bytes()).ok()?;
+        Self::from_encoded(&encoded)
     }
 
     /// Attempts to parse a valid YubiKey recipient from its SEC-1 encoding.

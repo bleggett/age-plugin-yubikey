@@ -2,6 +2,8 @@ use std::fmt;
 use std::iter;
 
 use base64::{prelude::BASE64_STANDARD_NO_PAD, Engine};
+use const_oid::ObjectIdentifier;
+use der::Encode;
 use x509_parser::{certificate::X509Certificate, der_parser::oid::Oid};
 use yubikey::{
     piv::{RetiredSlotId, SlotId},
@@ -11,7 +13,8 @@ use yubikey::{
 use crate::fl;
 use crate::{error::Error, key::Stub, Recipient, BINARY_NAME, USABLE_SLOTS};
 
-pub(crate) const POLICY_EXTENSION_OID: &[u64] = &[1, 3, 6, 1, 4, 1, 41482, 3, 8];
+pub(crate) const POLICY_EXTENSION_OID: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.3.6.1.4.1.41482.3.8");
+const POLICY_EXTENSION_OID_ARRAY: &[u64] = &[1, 3, 6, 1, 4, 1, 41482, 3, 8];
 
 pub(crate) fn ui_to_slot(slot: u8) -> Result<RetiredSlotId, Error> {
     // Use 1-indexing in the UI for niceness
@@ -116,14 +119,15 @@ impl Metadata {
         cert: &Certificate,
         all: bool,
     ) -> Option<Self> {
-        let (_, cert) = x509_parser::parse_x509_certificate(cert.as_ref()).ok()?;
+        let cert_der = cert.cert.to_der().ok()?;
+        let (_, cert) = x509_parser::parse_x509_certificate(&cert_der).ok()?;
 
         // We store the PIN and touch policies for identities in their certificates
         // using the same certificate extension as PIV attestations.
         // https://developers.yubico.com/PIV/Introduction/PIV_attestation.html
         let policies = |c: &X509Certificate| {
             c.tbs_certificate
-                .get_extension_unique(&Oid::from(POLICY_EXTENSION_OID).unwrap())
+                .get_extension_unique(&Oid::from(POLICY_EXTENSION_OID_ARRAY).unwrap())
                 // If the extension is duplicated, we assume it is invalid.
                 .ok()
                 .flatten()

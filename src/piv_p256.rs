@@ -8,7 +8,6 @@ use p256::{
     ecdh::EphemeralSecret,
     elliptic_curve::sec1::{FromEncodedPoint, ToEncodedPoint},
 };
-use rand::rngs::OsRng;
 use sha2::Sha256;
 
 use crate::{key::Connection, recipient::TAG_BYTES, util::base64_arg};
@@ -105,7 +104,27 @@ impl RecipientLine {
 
 impl Recipient {
     pub(crate) fn wrap_file_key(&self, file_key: &FileKey) -> RecipientLine {
-        let esk = EphemeralSecret::random(&mut OsRng);
+        // Use a cryptographically secure RNG compatible with rand 0.9
+        // getrandom provides OS-level cryptographically secure randomness
+        struct SecureRng;
+        impl rand_core::RngCore for SecureRng {
+            fn next_u32(&mut self) -> u32 {
+                let mut buf = [0u8; 4];
+                getrandom::getrandom(&mut buf).expect("getrandom failed");
+                u32::from_le_bytes(buf)
+            }
+            fn next_u64(&mut self) -> u64 {
+                let mut buf = [0u8; 8];
+                getrandom::getrandom(&mut buf).expect("getrandom failed");
+                u64::from_le_bytes(buf)
+            }
+            fn fill_bytes(&mut self, dest: &mut [u8]) {
+                getrandom::getrandom(dest).expect("getrandom failed");
+            }
+        }
+        impl rand_core::CryptoRng for SecureRng {}
+
+        let esk = EphemeralSecret::random(&mut SecureRng);
         let epk = esk.public_key();
         let epk_bytes = EphemeralKeyBytes::from_public_key(&epk);
 

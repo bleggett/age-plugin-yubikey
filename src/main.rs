@@ -12,6 +12,7 @@ use i18n_embed::{
 };
 use lazy_static::lazy_static;
 use rust_embed::RustEmbed;
+use der::Encode;
 use yubikey::{piv::RetiredSlotId, reader::Context, PinPolicy, Serial, TouchPolicy};
 
 mod builder;
@@ -399,8 +400,9 @@ fn main() -> Result<(), Error> {
                     .map(|(key, _, recipient)| {
                         recipient.as_ref().map(|_| {
                             // Cache the details we need to display to the user.
+                            let cert_der = key.certificate().cert.to_der().unwrap();
                             let (_, cert) =
-                                x509_parser::parse_x509_certificate(key.certificate().as_ref())
+                                x509_parser::parse_x509_certificate(&cert_der)
                                     .unwrap();
                             let (name, _) = util::extract_name(&cert, true).unwrap();
                             let created = cert

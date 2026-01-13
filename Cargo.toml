@@ -22,24 +22,40 @@ assets = [
 ]
 
 [dependencies]
-age-core = "0.11"
-age-plugin = "0.6"
+age-core = { git = "https://github.com/str4d/rage.git", rev = "c266bfa44c829621e2db647ced820fca357b032f" }
+age-plugin = { git = "https://github.com/str4d/rage.git", rev = "c266bfa44c829621e2db647ced820fca357b032f" }
 base64 = "0.21"
-bech32 = "0.9"
+bech32 = "0.11"
 console = { version = "0.15", default-features = false }
 dialoguer = { version = "0.11", default-features = false, features = ["password"] }
 env_logger = "0.10"
+getrandom = "0.2"
 gumdrop = "0.8"
 hex = "0.4"
 log = "0.4"
-p256 = { version = "0.13", features = ["ecdh"] }
+p256 = { version = "0.14.0-pre.11", features = ["ecdh"] }
+elliptic-curve = "=0.14.0-rc.14"
+ecdsa = "=0.17.0-rc.7"
+crypto-bigint = "=0.7.0-rc.6"
+crypto-primes = "=0.7.0-pre.3"
+hkdf = "=0.13.0-rc.1"
+signature = "=3.0.0-rc.4"
+rfc6979 = "=0.5.0-rc.1"
+cipher = { version = "=0.5.0-rc.1", features = ["rand_core"] }
+aes = { version = "=0.9.0-rc.1", features = ["zeroize"] }
+des = "=0.9.0-rc.1"
+chacha20poly1305 = "=0.11.0-rc.1"
 pcsc = "2.4"
-rand = "0.8"
-sha2 = "0.10"
+rand_core = "0.9"
+sha2 = "0.11.0-rc.2"
 which = "5"
 x509 = "0.2"
 x509-parser = "0.14"
-yubikey = { version = "=0.8.0-pre.0", features = ["untested"] }
+x509-cert = "=0.3.0-rc.2"
+der = "=0.8.0-rc.9"
+spki = "=0.8.0-rc.4"
+const-oid = "0.10"
+yubikey = { git = "https://github.com/iqlusioninc/yubikey.rs", rev = "c96b50bcecffe93387d07b9642c10290a35ce3f4", features = ["untested"] }
 
 # Translations
 i18n-embed = { version = "0.15", features = ["desktop-requester", "fluent-system"] }
